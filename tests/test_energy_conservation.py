@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_energy_conservation.py – End-to-end energy balance tests for the coupled model.
 
 These tests run short simulations and verify that energy is approximately conserved
@@ -16,10 +16,11 @@ from src.block_c import solve_internal, air_volume_average
 from src.materials import MATERIALS
 
 
-# ── Shared geometry ────────────────────────────────────────────────────────────
+# Shared geometry (planar slab, depth D)
 NR, NZ   = 6, 8
 R_INT    = 0.06
 L_INT    = 0.08
+DEPTH    = 0.10
 DR, DZ   = R_INT / NR, L_INT / NZ
 DT       = 30.0
 
@@ -36,12 +37,11 @@ def _air_maps():
     return mat, src
 
 def _cell_volumes():
-    i = np.arange(NR)
-    V_1d = np.pi * (2*i + 1) * DR**2 * DZ
-    return np.outer(V_1d, np.ones(NZ))
+    # Uniform planar cell volume V = dx*dz*D
+    return np.full((NR, NZ), DR * DZ * DEPTH)
 
 
-# ── 1. No source, no external driving → energy conserved ─────────────────────
+# 1. No source, no external driving → energy conserved
 def test_no_source_no_drive_energy_conserved():
     """
     With uniform IC = wall BC = T0 and no heater, total stored energy stays constant.
@@ -55,14 +55,14 @@ def test_no_source_no_drive_energy_conserved():
     E_init = np.sum(MATERIALS['air']['rho'] * MATERIALS['air']['cp'] * V * T_grid)
 
     for _ in range(20):
-        T_grid = solve_internal(T_grid, mat, src, T0, T0, T0, NR, NZ, DR, DZ, DT)
+        T_grid = solve_internal(T_grid, mat, src, T0, T0, T0, NR, NZ, DR, DZ, DT, D=DEPTH)
 
     E_final = np.sum(MATERIALS['air']['rho'] * MATERIALS['air']['cp'] * V * T_grid)
     rel_err = abs(E_final - E_init) / E_init
     assert rel_err < 1e-6, f"Energy changed by {rel_err*100:.4f}% with no driving."
 
 
-# ── 2. Heater power → energy gain matches Q·dt ───────────────────────────────
+# 2. Heater power → energy gain matches Q·dt
 def test_heater_power_matches_energy_gain():
     """
     With isolated system (T_bc = mean internal T) and a point heater,
@@ -87,7 +87,7 @@ def test_heater_power_matches_energy_gain():
     for _ in range(N_STEPS):
         T_mean = air_volume_average(T_grid, mat, NR, NZ, DR, DZ)
         T_grid = solve_internal(T_grid, mat, src, T_bc_arr, T0, T0,
-                                NR, NZ, DR, DZ, DT)
+                                NR, NZ, DR, DZ, DT, D=DEPTH)
 
     E_final = np.sum(rho_cp * V * T_grid)
     dE = E_final - E_init
@@ -100,7 +100,7 @@ def test_heater_power_matches_energy_gain():
     assert dE <= Q_expected * 1.05, "Cannot store more than source provides."
 
 
-# ── 3. Coupled B+C: wall + internal settle toward T_inf ──────────────────────
+# 3. Coupled B+C: wall + internal settle toward T_inf
 def test_coupled_B_C_convergence():
     """
     With a cold external environment and no internal source, the coupled system
@@ -128,7 +128,7 @@ def test_coupled_B_C_convergence():
         T_side_in = T_wall_arr[-1]
         T_grid = solve_internal(T_grid, mat, src,
                                 T_side_in, T_side_in, T_side_in,
-                                NR, NZ, DR, DZ, DT)
+                                NR, NZ, DR, DZ, DT, D=DEPTH)
 
     T_air_final = air_volume_average(T_grid, mat, NR, NZ, DR, DZ)
 
@@ -141,7 +141,7 @@ def test_coupled_B_C_convergence():
     assert frac_monotone > 0.9, "Air temperature must be predominantly monotone cooling."
 
 
-# ── 4. Block B wall energy balance over one step ──────────────────────────────
+# 4. Block B wall energy balance over one step
 def test_wall_energy_balance_one_step():
     """Verify heat flowing in from T_air = heat stored + heat lost to T_inf."""
     T_old  = np.array([230.0, 245.0, 260.0, 280.0])

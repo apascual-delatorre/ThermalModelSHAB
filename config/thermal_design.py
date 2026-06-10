@@ -1,7 +1,8 @@
-"""
-thermal_design.py - Non-component solids: PETG divider frame and optical windows.
+"""Non-component solids: passive PETG support shelves and optical windows.
 
-Grid: Nr=32 (i 0-31), Nz=100 (j 0-99), 2.5 mm cells, z=0 at the enclosure floor.
+Grid: planar (x, z), Nr=68, Nz=100, 2.5 mm cells, z=0 at the enclosure floor.
+STRUCTURES are written into the mesh before components (mesh.build_maps), so a shelf
+never overwrites an active device cell.
 """
 
 HEATERS = []
@@ -24,8 +25,13 @@ WINDOWS = [
     },
 ]
 
-PETG_FRAME = [
-    {'name': 'plate_L3_L2', 'region': {'r_idx': (0, 32), 'z_idx': (44, 46)}, 'material': 'petg'},
-    {'name': 'plate_L2_L1', 'region': {'r_idx': (0, 32), 'z_idx': (70, 72)}, 'material': 'petg'},
-    {'name': 'plate_top',   'region': {'r_idx': (0, 32), 'z_idx': (96, 100)}, 'material': 'petg'},
+# Passive PETG structure: thin horizontal support shelves only (1-cell, 2 mm), each
+# sitting below its supported components. 'petg' = solid member (k=0.20);
+# 'petg_frame' = open frame (k=0.165).
+
+STRUCTURES = [
+    {'name': 'shelf_top',     'region': {'r_idx': (8, 60),  'z_idx': (69, 70)}, 'material': 'petg'},  # below upper payload bay
+    {'name': 'shelf_mid',      'region': {'r_idx': (8, 60),  'z_idx': (53, 54)}, 'material': 'petg'},  # 2 mm shelf between the two middle decks
+    {'name': 'platform_mid',   'region': {'r_idx': (8, 60),  'z_idx': (38, 39)}, 'material': 'petg'},  # 2 mm deck (underside now at ~95 mm after the 5-cell shift)
+    {'name': 'shelf_battery', 'region': {'r_idx': (4, 64),  'z_idx': (6, 7)}, 'material': 'petg'},  # support below the wide battery
 ]

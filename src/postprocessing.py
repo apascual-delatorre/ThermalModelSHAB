@@ -1,4 +1,4 @@
-"""
+﻿"""
 postprocessing.py - Visualisation and energy-balance diagnostics.
 
 Functions
@@ -15,11 +15,11 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
 
-# ── Colour helpers ──────────────────────────────────────────────────────────────
+# Colour helpers
 _CMAP = 'RdBu_r'
 
 
-# ── Contour plot ───────────────────────────────────────────────────────────────
+# Contour plot
 def plot_temperature_contour(
     results: dict,
     r: np.ndarray,
@@ -51,22 +51,19 @@ def plot_temperature_contour(
     T_min = min(T_all[k].min() for k in time_indices) - 273.15
     T_max = max(T_all[k].max() for k in time_indices) - 273.15
 
-    # Mirror r about the axis to show the full diameter, z vertical (like the CAD)
-    r_full = np.concatenate([-r[::-1], r]) * 1e2          # (2Nr,) cm, -R … +R
-    R, Z = np.meshgrid(r_full, z * 1e2)                   # (Nz, 2Nr)
+    # Planar (x, z) section: x = left-right width (left wall at 0), z vertical. No mirror.
+    X, Z = np.meshgrid(r * 1e2, z * 1e2)                  # (Nz, Nr) cm
 
     for ax, k in zip(axes[0], time_indices):
         T_C = (T_all[k] - 273.15).T                       # (Nz, Nr)
-        T_full = np.concatenate([T_C[:, ::-1], T_C], axis=1)  # (Nz, 2Nr)
-        cf = ax.contourf(R, Z, T_full, levels=20, cmap=_CMAP, vmin=T_min, vmax=T_max)
-        ax.axvline(0.0, color='#555', lw=0.7, ls=(0, (4, 3)))  # central axis
-        ax.set_xlabel('r [cm]  (full diameter)')
+        cf = ax.contourf(X, Z, T_C, levels=20, cmap=_CMAP, vmin=T_min, vmax=T_max)
+        ax.set_xlabel('x [cm]  (left wall at 0)')
         ax.set_ylabel('z [cm]  (floor at bottom)')
         ax.set_aspect('equal')
         ax.set_title(f't = {t_arr[k]/60:.1f} min')
         fig.colorbar(cf, ax=ax, label='T [degC]')
 
-    fig.suptitle('Internal Temperature Field (CAD orientation: z vertical, full diameter)',
+    fig.suptitle('Internal Temperature Field (planar section: x horizontal, z vertical)',
                  fontsize=13)
     plt.tight_layout()
 
@@ -78,7 +75,7 @@ def plot_temperature_contour(
     plt.close(fig)
 
 
-# ── Component temperature traces ───────────────────────────────────────────────
+# Component temperature traces
 def plot_component_traces(
     results: dict,
     components_cfg: list,
@@ -128,7 +125,7 @@ def plot_component_traces(
     plt.close(fig)
 
 
-# ── Environment overview ───────────────────────────────────────────────────────
+# Environment overview
 def plot_environment(
     results: dict,
     h_alt_fn,
@@ -166,7 +163,7 @@ def plot_environment(
     plt.close(fig)
 
 
-# ── Wall temperature history ───────────────────────────────────────────────────
+# Wall temperature history
 def plot_wall_temperatures(
     results: dict,
     save_path: str | None = None,
@@ -201,7 +198,7 @@ def plot_wall_temperatures(
     plt.close(fig)
 
 
-# ── Energy balance check ───────────────────────────────────────────────────────
+# Energy balance check
 def energy_balance_check(results: dict, cfg: dict, verbose: bool = True) -> dict:
     """
     Compute a simplified energy balance at each saved timestep.
@@ -220,12 +217,11 @@ def energy_balance_check(results: dict, cfg: dict, verbose: bool = True) -> dict
     Nz   = cfg['Nz']
     dr   = cfg['R_int'] / Nr
     dz   = cfg['L_int'] / Nz
+    D    = cfg.get('D_int', 2.0 * cfg['R_int'])
     dt   = cfg['dt']
 
-    # Cell volumes
-    i_idx = np.arange(Nr)
-    V_1d  = np.pi * (2 * i_idx + 1) * dr**2 * dz
-    V_2d  = np.outer(V_1d, np.ones(Nz))
+    # Planar cell volumes (uniform slab of depth D)
+    V_2d = np.full((Nr, Nz), dr * dz * D)
 
     # Heater total power
     Q_source_total = sum(
@@ -239,8 +235,9 @@ def energy_balance_check(results: dict, cfg: dict, verbose: bool = True) -> dict
 
     R_int   = cfg['R_int']
     L_int   = cfg['L_int']
-    A_side  = 2 * np.pi * R_int * L_int
-    A_caps  = 2 * np.pi * R_int**2
+    W       = Nr * dr   # interior width (planar)
+    A_side  = 2.0 * (W * L_int) + 2.0 * (L_int * D)   # lateral inner-wall area (planar box)
+    A_caps  = 2.0 * (W * D)                            # top + bottom cap area
 
     Q_stored_arr = []
     Q_wall_arr   = []

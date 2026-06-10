@@ -10,9 +10,19 @@ volumes, interior nodes full control volumes.
 import numpy as np
 from scipy.linalg import solve_banded
 
+SIGMA_SB = 5.670374419e-8   # Stefan-Boltzmann constant [W/m^2 K^4]
 
-def solve_wall(T_old, T_inf, h_ext, T_air, h_int, k_wall, rho_wall, cp_wall, dx, dt):
-    """Advance the wall temperature array one timestep (implicit Euler)."""
+
+def solve_wall(T_old, T_inf, h_ext, T_air, h_int, k_wall, rho_wall, cp_wall, dx, dt,
+               eps_ir=0.0, T_sink=0.0, q_solar=0.0):
+    """Advance the wall temperature array one timestep (implicit Euler).
+
+    Optional external radiation on the outer surface (node 0):
+      eps_ir  : long-wave surface emissivity (0 disables radiation).
+      T_sink  : effective radiative-environment temperature [K] (space + Earth IR).
+      q_solar : absorbed solar flux [W/m^2] = alpha_solar * incident flux.
+    Radiation is linearized about the previous outer-surface temperature.
+    """
     N = len(T_old)
     if N < 2:
         raise ValueError("Wall must have at least 2 nodes.")
@@ -27,6 +37,10 @@ def solve_wall(T_old, T_inf, h_ext, T_air, h_int, k_wall, rho_wall, cp_wall, dx,
     ab[1, 0] = cap_half + h_ext + alpha
     ab[0, 1] = -alpha
     b[0] = cap_half * T_old[0] + h_ext * T_inf
+    if eps_ir > 0.0:
+        h_rad = eps_ir * SIGMA_SB * 4.0 * T_old[0]**3   # linearized about previous T
+        ab[1, 0] += h_rad
+        b[0] += h_rad * T_sink + q_solar
 
     for i in range(1, N - 1):
         ab[2, i - 1] = -alpha

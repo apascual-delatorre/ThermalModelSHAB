@@ -1,9 +1,13 @@
 """
-mesh.py - Axisymmetric (r, z) finite-volume mesh and material/source map assembly.
+mesh.py - Planar (x, z) finite-volume mesh and material/source map assembly.
 
-Cell centres at r=(i+0.5)dr, z=(j+0.5)dz. The material map holds one material name
+Cell centres at x=(i+0.5)dx, z=(j+0.5)dz, on a uniform Cartesian grid representing a
+vertical longitudinal slice of the payload (x = left-right width, z = height), treated
+as an extruded slab of out-of-plane depth D. The material map holds one material name
 per cell; the source map holds the heat generation [W] per cell. Component, strap, and
 (enabled) heater regions are written in that order, later entries overriding earlier.
+
+(Names Nr/dr/r_idx are kept for call-site stability; they denote the planar x-direction.)
 """
 
 import numpy as np
@@ -18,29 +22,34 @@ def build_mesh(R_int: float, L_int: float, Nr: int, Nz: int):
     return r, z, dr, dz
 
 
-def cell_geometry(Nr: int, Nz: int, dr: float, dz: float):
-    """Return cell volumes and face areas (V, A_r_inner, A_r_outer, A_z)."""
-    i = np.arange(Nr)
-    r_inner = i * dr
-    r_outer = (i + 1) * dr
+def cell_geometry(Nr: int, Nz: int, dr: float, dz: float, D: float = 1.0):
+    """Return uniform planar cell volume and face areas (V, A_x, A_z) for slab depth D.
 
-    A_r_inner_1d = 2 * np.pi * r_inner * dz
-    A_r_outer_1d = 2 * np.pi * r_outer * dz
-    A_z_1d = np.pi * (r_outer**2 - r_inner**2)
-    V_1d = A_z_1d * dz
-
-    ones = np.ones(Nz)
-    V = np.outer(V_1d, ones)
-    A_r_inner = np.outer(A_r_inner_1d, ones)
-    A_r_outer = np.outer(A_r_outer_1d, ones)
-    A_z = np.outer(A_z_1d, ones)
-    return V, A_r_inner, A_r_outer, A_z
+    V = dx*dz*D ; A_x = dz*D (left/right faces) ; A_z = dx*D (top/bottom faces).
+    """
+    shape = (Nr, Nz)
+    V = np.full(shape, dr * dz * D)
+    A_x = np.full(shape, dz * D)
+    A_z = np.full(shape, dr * D)
+    return V, A_x, A_z
 
 
-def build_maps(Nr: int, Nz: int, components: list, heaters: list, straps: list):
-    """Build the material_map (str per cell) and source_map (W per cell)."""
+def build_maps(Nr: int, Nz: int, components: list, heaters: list, straps: list,
+               structures: list | None = None):
+    """Build the material_map (str per cell) and source_map (W per cell).
+
+    Write order (later overrides earlier): structures -> components -> straps -> heaters.
+    Passive PETG structures (shelves, partitions, the battery cage) are written FIRST so
+    any powered component placed over them wins the overlap — structural PETG can never
+    overwrite an active device; it is trimmed instead.
+    """
     material_map = np.full((Nr, Nz), 'air', dtype=object)
     source_map = np.zeros((Nr, Nz), dtype=float)
+
+    for s in (structures or []):
+        ri0, ri1 = s['region']['r_idx']
+        zi0, zi1 = s['region']['z_idx']
+        material_map[ri0:ri1, zi0:zi1] = s.get('material', 'petg_frame')
 
     for comp in components:
         ri0, ri1 = comp['region']['r_idx']

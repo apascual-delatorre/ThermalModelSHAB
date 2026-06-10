@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_block_b.py – Unit tests for Block B (1-D implicit wall conduction solver).
 """
 
@@ -19,7 +19,7 @@ def _solve(T_old, T_inf, h_ext, T_air, h_int=1.0):
     return solve_wall(T_old, T_inf, h_ext, T_air, h_int, K, RHO, CP, DX, DT)
 
 
-# ── 1. Thermal equilibrium ─────────────────────────────────────────────────────
+# 1. Thermal equilibrium
 def test_equilibrium_no_change():
     """Uniform IC matching BCs → solution unchanged."""
     T0 = np.full(N, 280.0)
@@ -28,7 +28,7 @@ def test_equilibrium_no_change():
         "Thermal equilibrium must produce no temperature change"
 
 
-# ── 2. Steady state monotone ───────────────────────────────────────────────────
+# 2. Steady state monotone
 def test_steady_state_monotone():
     """T_inf=220, T_air=300 → profile monotone increasing outer→inner."""
     T = np.full(N, 260.0)
@@ -41,7 +41,7 @@ def test_steady_state_monotone():
     assert np.all(diffs > 0), "Profile must be monotone increasing outer→inner"
 
 
-# ── 3. Energy conservation ────────────────────────────────────────────────────
+# 3. Energy conservation
 def test_energy_conservation():
     """
     Over one timestep:
@@ -65,14 +65,14 @@ def test_energy_conservation():
     assert residual < 0.01, f"Energy balance error {residual*100:.2f}% > 1%"
 
 
-# ── 4. Accessor functions ──────────────────────────────────────────────────────
+# 4. Accessor functions
 def test_accessors():
     T = np.array([210.0, 220.0, 240.0, 260.0, 280.0])
     assert wall_outer_temperature(T) == pytest.approx(210.0)
     assert wall_inner_temperature(T) == pytest.approx(280.0)
 
 
-# ── 5. Minimum node validation ────────────────────────────────────────────────
+# 5. Minimum node validation
 def test_single_node_raises():
     with pytest.raises(ValueError):
         _solve(np.array([280.0]), T_inf=220.0, h_ext=5.0, T_air=300.0)
@@ -83,7 +83,7 @@ def test_two_nodes_accepted():
     assert T_new.shape == (2,)
 
 
-# ── 6. Large h_ext → outer node → T_inf ──────────────────────────────────────
+# 6. Large h_ext → outer node → T_inf
 def test_large_h_ext_drives_outer_node():
     """With h_ext very large, outer node should rapidly reach T_inf."""
     T_inf = 200.0
@@ -95,7 +95,7 @@ def test_large_h_ext_drives_outer_node():
         "Outer node must snap to T_inf when h_ext is very large"
 
 
-# ── 7. Implicit Euler stability ────────────────────────────────────────────────
+# 7. Implicit Euler stability
 def test_unconditional_stability_large_dt():
     """Implicit Euler must not diverge even with very large timestep."""
     T = np.full(N, 290.0)

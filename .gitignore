@@ -28,5 +28,16 @@ Thumbs.db
 # Local Claude Code workspace
 .claude/
 
+# Assistant working notes (not part of the published project)
+CLAUDE.md
+task.md
+
 # Local archive of previous-session outputs (not part of the published project)
 archive/
+
+# Mesh-map figures and dev render (not part of the published report)
+**/mesh_map.png
+mesh_map_review.png
+
+# Scenario folder kept locally only (moved into archive/)
+report_launch/

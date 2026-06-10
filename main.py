@@ -20,7 +20,7 @@ sys.path.insert(0, _HERE)
 
 from config.mission_config import MISSION_CONFIG
 from config.components_config import COMPONENTS
-from config.thermal_design import HEATERS, STRAPS, WINDOWS
+from config.thermal_design import HEATERS, STRAPS, WINDOWS, STRUCTURES
 
 from src.coupling import run_simulation
 from src.mesh import build_mesh
@@ -36,7 +36,6 @@ from src.postprocessing import (
 ALT_IMAGING = 16_000.0       # altitude at which imaging begins [m]
 P0 = 101_325.0               # sea-level reference pressure [Pa]
 T_LAUNCH = 5.0 + 273.15      # initial cage temperature (cold-night launch) [K]
-P_OBC = 7.0                  # Jetson Orin Nano dissipation [W]
 
 
 def h_inside(h_alt: float, h0: float = 1.5) -> float:
@@ -56,19 +55,26 @@ def build_cfg() -> dict:
     cfg['heaters'] = HEATERS
     cfg['straps'] = STRAPS
     cfg['windows'] = WINDOWS
+    cfg['structures'] = STRUCTURES
     cfg['T_launch'] = T_LAUNCH
     cfg['h_inside_fn'] = h_inside
     return cfg
 
 
-def with_jetson_schedule(cfg: dict, power_fn) -> dict:
-    """Return a copy of cfg whose Jetson dissipation follows power_fn(t, h_alt)."""
+def with_obc_schedule(cfg: dict, gate) -> dict:
+    """Return a copy of cfg in which every OBC-gated component (Jetson and its
+    dependents: SSD, USB, SD reader, EVK4) follows gate(t, h_alt) in [0, 1].
+
+    Each gated component dissipates its own rated `power` while the gate is on
+    and 0 W while off, so a single scenario schedule drives the whole OBC
+    subsystem. Non-gated components keep their static power.
+    """
     cfg2 = dict(cfg)
     cfg2['components'] = copy.deepcopy(cfg['components'])
     for comp in cfg2['components']:
-        if comp['label'] == 'NVIDIA Jetson Orin Nano':
-            comp['power_fn'] = power_fn
-            break
+        if comp.get('obc_gated'):
+            rated = comp.get('power', 0.0)
+            comp['power_fn'] = (lambda p: (lambda t, h: p * gate(t, h)))(rated)
     return cfg2
 
 
@@ -122,18 +128,20 @@ def main():
     t_off = t_16 + 3600.0
     print(f"16 km at t={t_16/60:.1f} min; imaging ends at t={t_off/60:.1f} min")
 
-    def power_launch(t, h):
-        return P_OBC if t <= t_off else 0.0
+    # Scenario gates in [0, 1] applied to the whole OBC subsystem (see
+    # with_obc_schedule). Both turn the OBC off one hour after the 16 km boot.
+    def gate_launch(t, h):
+        return 1.0 if t <= t_off else 0.0
 
-    def power_16km(t, h):
-        return P_OBC if t_16 <= t <= t_off else 0.0
+    def gate_16km(t, h):
+        return 1.0 if t_16 <= t <= t_off else 0.0
 
     # Each scenario also sets the contour window: the launch case spans the whole
     # flight, while the 16 km case is sampled from power-on (16 km) to power-off so
     # the heating evolution during the active window is visible.
     scenarios = [
-        ('report_launch', 'OBC from launch', power_launch, None),
-        ('report_16km',   'OBC from 16 km',  power_16km,   t_16),
+        ('report_launch', 'OBC from launch', gate_launch, None),
+        ('report_16km',   'OBC from 16 km',  gate_16km,   t_16),
     ]
 
     r, z, _, _ = build_mesh(base_cfg['R_int'], base_cfg['L_int'],
@@ -141,7 +149,7 @@ def main():
 
     report_dirs = []
     first_results = None
-    for folder, label, power_fn, contour_start in scenarios:
+    for folder, label, gate, contour_start in scenarios:
         out_dir = os.path.join(_HERE, folder)
         os.makedirs(out_dir, exist_ok=True)
         report_dirs.append(out_dir)
@@ -149,7 +157,7 @@ def main():
         def out(name, d=out_dir):
             return os.path.join(d, name)
 
-        cfg = with_jetson_schedule(base_cfg, power_fn)
+        cfg = with_obc_schedule(base_cfg, gate)
         print(f"\n=== {label} ===")
         results = run_simulation(cfg)
         if first_results is None:

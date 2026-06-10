@@ -1,9 +1,8 @@
-"""
-coupling.py - Lagged time-stepping loop.
+"""Lagged time-stepping loop coupling the three blocks.
 
-Per step: evaluate Block A (T_inf, h_ext); take the lagged air temperature; advance
-the side/top/bottom walls and the window pane with Block B; advance the internal field
-with Block C using the new inner-wall temperatures.
+Per step: Block A gives T_inf and h_ext; the lagged cavity air temperature drives
+Block B for the walls and window pane; Block C advances the internal field using the
+new inner-wall temperatures.
 """
 
 import numpy as np
@@ -15,6 +14,9 @@ from .block_c import solve_internal, air_volume_average, component_temperature
 from .mesh import build_mesh, build_maps
 from .materials import MATERIALS
 
+SIGMA_SB = 5.670374419e-8   # Stefan-Boltzmann constant [W/m^2 K^4]
+EPS_RAD_INT = 0.85          # internal surface emissivity
+
 
 def run_simulation(cfg: dict) -> dict:
     """Run the coupled simulation and return time-series results."""
@@ -22,6 +24,7 @@ def run_simulation(cfg: dict) -> dict:
     L_int = cfg['L_int']
     Nr = cfg['Nr']
     Nz = cfg['Nz']
+    D_int = cfg.get('D_int', 2.0 * R_int)   # out-of-plane slab depth [m]
 
     R_box = cfg['R_box']
     L_box = cfg['L_box']
@@ -59,9 +62,16 @@ def run_simulation(cfg: dict) -> dict:
     h_inside_base = cfg.get('h_inside', 1.0)
     h_inside_fn_cfg = cfg.get('h_inside_fn', None)
 
+    # Outer-wall radiation: emissivity, sink temperature, absorbed solar flux.
+    ext_rad = cfg.get('ext_radiation') or {}
+    eps_ir = ext_rad.get('eps_ir', 0.0)
+    T_sink = ext_rad.get('T_sink', 0.0)
+    q_solar = ext_rad.get('q_solar', 0.0)
+
     r, z, dr, dz = build_mesh(R_int, L_int, Nr, Nz)
     material_map, source_map = build_maps(
-        Nr, Nz, cfg.get('components', []), cfg.get('heaters', []), cfg.get('straps', []))
+        Nr, Nz, cfg.get('components', []), cfg.get('heaters', []), cfg.get('straps', []),
+        structures=cfg.get('structures', []))
 
     # Components with a power_fn(t, h_alt) override static power each step
     dynamic_comps = []
@@ -77,6 +87,23 @@ def run_simulation(cfg: dict) -> dict:
                 'r_idx': (ri0, ri1), 'z_idx': (zi0, zi1),
                 'n_cells': n_cells, 'power_fn': comp['power_fn'],
             })
+
+    # Optional internal radiation: each component exchanges net flux
+    # eps*sigma*A*(T_comp^4 - T_wall^4) with the inner wall (view factor ~1),
+    # evaluated explicitly from the lagged field. Off by default.
+    rad_comps = []
+    if cfg.get('internal_radiation', False):
+        for comp in cfg.get('components', []):
+            ri0, ri1 = comp['region']['r_idx']
+            zi0, zi1 = comp['region']['z_idx']
+            n_cells = (ri1 - ri0) * (zi1 - zi0)
+            if n_cells <= 0:
+                continue
+            w = (ri1 - ri0) * dr        # block width  (x)
+            hgt = (zi1 - zi0) * dz      # block height (z)
+            area = 2.0 * (w + hgt) * D_int   # in-plane perimeter extruded through depth
+            rad_comps.append({'r_idx': (ri0, ri1), 'z_idx': (zi0, zi1),
+                              'n_cells': n_cells, 'area': area})
 
     T0 = cfg['T_launch']
     T_grid = np.full((Nr, Nz), T0)
@@ -108,11 +135,14 @@ def run_simulation(cfg: dict) -> dict:
         T_air = air_volume_average(T_grid, material_map, Nr, Nz, dr, dz)
 
         T_wall_side = solve_wall(T_wall_side, T_inf, h_total, T_air, h_inside,
-                                 k_eps, rho_eps, cp_eps, dx_wall, dt)
+                                 k_eps, rho_eps, cp_eps, dx_wall, dt,
+                                 eps_ir=eps_ir, T_sink=T_sink, q_solar=q_solar)
         T_wall_top = solve_wall(T_wall_top, T_inf, h_total, T_air, h_inside,
-                                k_eps, rho_eps, cp_eps, dx_wall, dt)
+                                k_eps, rho_eps, cp_eps, dx_wall, dt,
+                                eps_ir=eps_ir, T_sink=T_sink, q_solar=q_solar)
         T_wall_bot = solve_wall(T_wall_bot, T_inf, h_total, T_air, h_inside,
-                                k_eps, rho_eps, cp_eps, dx_wall, dt)
+                                k_eps, rho_eps, cp_eps, dx_wall, dt,
+                                eps_ir=eps_ir, T_sink=T_sink, q_solar=q_solar)
 
         T_side_inner = T_wall_side[-1]
         T_top_inner = T_wall_top[-1]
@@ -122,23 +152,35 @@ def run_simulation(cfg: dict) -> dict:
         if win_pane is not None:
             T_wall_win = solve_wall(T_wall_win, T_inf, h_total, T_air, h_inside,
                                     win_pane['k'], win_pane['rho'], win_pane['cp'],
-                                    win_pane['dx'], dt)
+                                    win_pane['dx'], dt,
+                                    eps_ir=eps_ir, T_sink=T_sink, q_solar=q_solar)
             T_window_inner = T_wall_win[-1]
 
-        if dynamic_comps:
+        if dynamic_comps or rad_comps:
             current_source = source_map.copy()
+        else:
+            current_source = source_map
+
+        if dynamic_comps:
             for dc in dynamic_comps:
                 ri0, ri1 = dc['r_idx']
                 zi0, zi1 = dc['z_idx']
                 p = dc['power_fn'](t, h_alt)
                 current_source[ri0:ri1, zi0:zi1] += p / dc['n_cells']
-        else:
-            current_source = source_map
+
+        if rad_comps:
+            T_wall_ref = (T_side_inner + T_top_inner + T_bot_inner) / 3.0
+            for rc in rad_comps:
+                ri0, ri1 = rc['r_idx']
+                zi0, zi1 = rc['z_idx']
+                T_c = float(np.mean(T_grid[ri0:ri1, zi0:zi1]))
+                Q_rad = EPS_RAD_INT * SIGMA_SB * rc['area'] * (T_c**4 - T_wall_ref**4)
+                current_source[ri0:ri1, zi0:zi1] -= Q_rad / rc['n_cells']
 
         if step > 0:
             T_grid = solve_internal(T_grid, material_map, current_source,
                                     T_side_inner, T_top_inner, T_bot_inner,
-                                    Nr, Nz, dr, dz, dt,
+                                    Nr, Nz, dr, dz, dt, D=D_int,
                                     window_area=window_area_z, T_window=T_window_inner)
 
         if step % save_every == 0:

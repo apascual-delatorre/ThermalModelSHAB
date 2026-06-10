@@ -1,12 +1,12 @@
-"""
-test_block_c.py – Unit tests for Block C (2-D axisymmetric internal solver).
+﻿"""
+test_block_c.py – Unit tests for Block C (2-D planar internal solver).
 
 Tests:
   1. Thermal equilibrium  : uniform IC = uniform BCs → field stays uniform
-  2. Monotone steady state: after many steps, T rises from cold wall inward
-  3. Dirichlet BC enforcement: cells near outer wall → T_r_wall after long run
+  2. Centre-vs-wall gradient: a heated centre stays warmer than the cold side walls
+  3. Dirichlet BC enforcement: cells near a wall → T_r_wall after long run
   4. Source term          : cell temperatures increase when heater power is on
-  5. Axis symmetry        : no artefact at i=0 (compare left vs. right column mirror)
+  5. Left wall (i=0)      : no artefact — i=0 is now a Dirichlet wall, not an axis
   6. air_volume_average   : returns correct average over air cells
   7. component_temperature: returns mean of the specified region
 """
@@ -20,7 +20,7 @@ import pytest
 from src.block_c import solve_internal, air_volume_average, component_temperature
 from src.mesh    import build_mesh, build_maps
 
-# ── Common small mesh ──────────────────────────────────────────────────────────
+# Common small mesh
 NR, NZ = 5, 6
 R_INT  = 0.05   # m
 L_INT  = 0.06   # m
@@ -34,7 +34,7 @@ def _air_maps(nr=NR, nz=NZ):
     return mat, src
 
 
-# ── 1. Thermal equilibrium ─────────────────────────────────────────────────────
+# 1. Thermal equilibrium
 def test_equilibrium():
     T0   = 280.0
     mat, src = _air_maps()
@@ -44,29 +44,27 @@ def test_equilibrium():
         "Uniform BC + uniform IC should produce a uniform field."
 
 
-# ── 2. Monotone steady state ───────────────────────────────────────────────────
-def test_steady_state_monotone():
-    T_wall = 220.0   # cold outer wall
-    T_top  = 220.0
-    T_bot  = 220.0
-    T_hot  = 300.0   # warm initial interior
-
+# 2. Centre-vs-wall gradient
+def test_centre_warmer_than_walls():
+    """With cold walls on both sides and a heated centre column, the centre cells
+    must settle warmer than the wall-adjacent cells (no symmetry axis any more)."""
+    T_wall = 220.0   # cold walls (both lateral + caps)
     mat, src = _air_maps()
-    T_old = np.full((NR, NZ), T_hot)
+    src[NR // 2, :] = 2.0   # heat the central x-column
 
-    # Advance 500 steps toward steady state
+    T_old = np.full((NR, NZ), T_wall)
     for _ in range(500):
-        T_old = solve_internal(T_old, mat, src, T_wall, T_top, T_bot,
+        T_old = solve_internal(T_old, mat, src, T_wall, T_wall, T_wall,
                                NR, NZ, DR, DZ, DT)
 
-    # Outer cells should be closer to wall temperature
-    T_inner_col = T_old[0, NZ // 2]   # axis (coldest sinks to wall via BCs)
-    T_outer_col = T_old[NR - 1, NZ // 2]
-    assert T_outer_col < T_inner_col + 5.0, \
-        "Outer cells should approach wall temperature faster than interior."
+    T_centre = T_old[NR // 2, NZ // 2]
+    T_left   = T_old[0, NZ // 2]
+    T_right  = T_old[NR - 1, NZ // 2]
+    assert T_centre > T_left + 1.0 and T_centre > T_right + 1.0, \
+        "Heated centre must be warmer than both cold side walls."
 
 
-# ── 3. Dirichlet BC at outer wall ─────────────────────────────────────────────
+# 3. Dirichlet BC at outer wall
 def test_dirichlet_outer_wall():
     T_wall = 200.0
     mat, src = _air_maps()
@@ -81,7 +79,7 @@ def test_dirichlet_outer_wall():
         "With uniform BC and no source, all cells must converge to T_wall."
 
 
-# ── 4. Source term raises temperature ─────────────────────────────────────────
+# 4. Source term raises temperature
 def test_source_raises_temperature():
     T_bc = 250.0
     mat, src = _air_maps()
@@ -104,13 +102,13 @@ def test_source_raises_temperature():
         "Source should only raise (or maintain) temperatures everywhere."
 
 
-# ── 5. Axis symmetry: no artefact at i=0 ──────────────────────────────────────
-def test_axis_no_artefact():
-    """The axis cell (i=0) should not produce NaN or unphysical values."""
+# 5. Left wall (i=0): no artefact
+def test_left_wall_no_artefact():
+    """The left-wall cells (i=0, now Dirichlet) should not produce NaN/unphysical values."""
     T_bc = 250.0
     mat, src = _air_maps()
     T_old = np.full((NR, NZ), 290.0)
-    src[0, :] = 1.0   # put source directly on axis cells
+    src[0, :] = 1.0   # put source directly on the left-wall cells
 
     for _ in range(50):
         T_old = solve_internal(T_old, mat, src, T_bc, T_bc, T_bc,
@@ -121,7 +119,7 @@ def test_axis_no_artefact():
     assert np.all(T_old >= T_bc - 1.0), "Temperature below BC – unphysical."
 
 
-# ── 6. air_volume_average ──────────────────────────────────────────────────────
+# 6. air_volume_average
 def test_air_volume_average_uniform():
     T_field = np.full((NR, NZ), 280.0)
     mat, _  = _air_maps()
@@ -130,17 +128,17 @@ def test_air_volume_average_uniform():
 
 
 def test_air_volume_average_weighted():
-    """Hotter cells near axis (small volume) should count less than outer cells."""
+    """One hot x-column out of NR is diluted by the rest (uniform planar cell volume)."""
     mat, _ = _air_maps()
     T_field = np.full((NR, NZ), 250.0)
-    T_field[0, :] = 350.0    # axis cells: small volume, high T
+    T_field[0, :] = 350.0    # one column hot; 1 of NR columns
 
     T_avg = air_volume_average(T_field, mat, NR, NZ, DR, DZ)
-    # Axis volume is tiny → average should be much closer to 250 than to 350
-    assert T_avg < 280.0, "Volume-weighted average should be dominated by outer cells."
+    # Plain mean: (1*350 + (NR-1)*250) / NR  → well below 280 for NR=5
+    assert T_avg < 280.0, "A single hot column should be diluted by the rest."
 
 
-# ── 7. component_temperature ───────────────────────────────────────────────────
+# 7. component_temperature
 def test_component_temperature():
     T_field = np.full((NR, NZ), 270.0)
     T_field[1:3, 2:4] = 300.0   # patch of 2×2 cells at 300 K

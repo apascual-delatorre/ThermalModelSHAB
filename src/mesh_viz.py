@@ -1,15 +1,14 @@
-"""
+﻿"""
 mesh_viz.py -- Visual inspection of the compiled mesh maps.
 
 Renders each cell coloured by its material (left panel) and by its heat
 source [W] (right panel), so you can immediately verify that the config
 assembled the mesh correctly before running a long simulation.
 
-ORIENTATION (2026-06-06): plotted to match the CAD section drawing -- z is the
-VERTICAL axis (floor z=0 at the bottom, top of cavity at the top) and the
-axisymmetric (r,z) field is MIRRORED about the central axis so the full Ø160 mm
-diameter is shown (r negative on the left, positive on the right), exactly like the
-front-section CAD. Component labels are written once, on the right (+r) half.
+ORIENTATION (planar rework): the field is a 2-D PLANAR vertical section -- x is the
+horizontal width (left wall at x=0, right wall at x=W) and z is the VERTICAL axis
+(floor z=0 at the bottom). There is no symmetry axis: the section is drawn as-is, left
+NOT mirrored to right. Component labels are written once at each region centre.
 
 Entry points
 ------------
@@ -26,15 +25,16 @@ import matplotlib.patches as mpatches
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.ticker import MultipleLocator
 
-# ── Material palette (ordered for consistent legend) ──────────────────────────
+# Material palette (ordered for consistent legend)
 _PALETTE_ORDER = [
-    'air', 'petg', 'aluminum', 'al_strap', 'heater',
+    'air', 'petg', 'petg_frame', 'aluminum', 'al_strap', 'heater',
     'battery', 'obc', 'stm32', 'camera',
     'pcb_generic', 'nvme', 'eps', 'glass_optic', 'copper_wire',
 ]
 _PALETTE_HEX = {
     'air':         '#D6EAF8',   # pale blue
     'petg':        '#A9DFBF',   # pale green
+    'petg_frame':  '#52BE80',   # medium green (open frame)
     'aluminum':    '#AEB6BF',   # steel gray
     'al_strap':    '#AEB6BF',   # steel gray (foil strap)
     'heater':      '#E74C3C',   # red
@@ -51,7 +51,7 @@ _PALETTE_HEX = {
 _FALLBACK_HEX = '#FADBD8'       # light pink for unknown materials
 
 
-# ── Core plot function ─────────────────────────────────────────────────────────
+# Core plot function
 def plot_mesh_maps(
     material_map: np.ndarray,
     source_map: np.ndarray,
@@ -65,8 +65,8 @@ def plot_mesh_maps(
     save_path: str | None = None,
 ):
     """
-    Two-panel figure showing the compiled mesh configuration in CAD orientation
-    (z vertical, full mirrored diameter):
+    Two-panel figure showing the compiled mesh configuration in planar orientation
+    (x horizontal width, z vertical height, no mirroring):
 
       Left  -- Material map: each cell coloured by material, with region
                outlines and labels for every component, heater, and strap.
@@ -75,15 +75,13 @@ def plot_mesh_maps(
     Nr, Nz = material_map.shape
 
     # Cell-face coordinates in cm
-    r_faces = np.linspace(0, Nr * dr, Nr + 1) * 1e2          # 0 … R   (Nr+1,)
+    x_faces = np.linspace(0, Nr * dr, Nr + 1) * 1e2          # 0 … W   (Nr+1,)
     z_faces = np.linspace(0, Nz * dz, Nz + 1) * 1e2          # 0 … L   (Nz+1,)
-    # Mirror r about the axis to show the full diameter -R … +R
-    r_faces_full = np.concatenate([-r_faces[::-1], r_faces[1:]])   # (2Nr+1,)
 
     r_c = r * 1e2   # cell centres in cm
     z_c = z * 1e2
 
-    # ── Build integer coding for material map ──────────────────────────────────
+    # Build integer coding for material map
     unique_mats = list(_PALETTE_ORDER)
     for mat in np.unique(material_map):
         if mat not in unique_mats:
@@ -99,13 +97,13 @@ def plot_mesh_maps(
     present_idx = sorted(set(int_map.flatten()))
     present_mats = [unique_mats[i] for i in present_idx]
 
-    # ── Figure (portrait: z is now the tall vertical axis) ─────────────────────
-    fig_w = max(11, Nr * 0.85 + 5)
+    # Figure (portrait: z is the tall vertical axis)
+    fig_w = max(11, Nr * 0.45 + 5)
     fig_h = max(7,  Nz * 0.22 + 2)
     fig = plt.figure(figsize=(fig_w, fig_h))
     fig.suptitle(
-        f'Mesh Map Inspection  (CAD orientation: z vertical, full diameter)   '
-        f'[{Nr}r x {Nz}z cells,  dr={dr*1e3:.1f} mm,  dz={dz*1e3:.1f} mm]',
+        f'Mesh Map Inspection  (planar section: x horizontal, z vertical)   '
+        f'[{Nr}x x {Nz}z cells,  dx={dr*1e3:.1f} mm,  dz={dz*1e3:.1f} mm]',
         fontsize=11, fontweight='bold', y=0.99,
     )
 
@@ -114,15 +112,14 @@ def plot_mesh_maps(
     ax_mat = fig.add_subplot(gs[0])
     ax_src = fig.add_subplot(gs[1])
 
-    # ── Panel 1: Material map (mirrored, z vertical) ───────────────────────────
-    int_full = _mirror(int_map)                       # (Nz, 2Nr)
-    X, Y = np.meshgrid(r_faces_full, z_faces)         # (Nz+1, 2Nr+1)
+    # Panel 1: Material map (planar, z vertical)
+    X, Y = np.meshgrid(x_faces, z_faces)              # (Nz+1, Nr+1)
     ax_mat.pcolormesh(
-        X, Y, int_full,
+        X, Y, int_map.T,
         cmap=cmap_mat, norm=norm_mat,
         edgecolors='#777777', linewidth=0.3,
     )
-    _style_ax(ax_mat, r_faces_full, z_faces, dr * 1e2, dz * 1e2, 'Material Map')
+    _style_ax(ax_mat, x_faces, z_faces, dr * 1e2, dz * 1e2, 'Material Map')
 
     patches = []
     for mat in _PALETTE_ORDER + [m for m in unique_mats if m not in _PALETTE_ORDER]:
@@ -147,11 +144,10 @@ def plot_mesh_maps(
                       use_label='name', text_color='#111', border_color='#333',
                       fontsize=4.5, border_style=':')
 
-    # ── Panel 2: Source map (mirrored, z vertical) ─────────────────────────────
+    # Panel 2: Source map (planar, z vertical)
     if source_map.max() > 0.0:
-        src_full = _mirror(source_map)
         im = ax_src.pcolormesh(
-            X, Y, src_full,
+            X, Y, source_map.T,
             cmap='hot_r', vmin=0, vmax=source_map.max(),
             edgecolors='#aaa', linewidth=0.2,
         )
@@ -164,13 +160,13 @@ def plot_mesh_maps(
                           fontsize=6, border_lw=1.0)
     else:
         checker = (np.indices((Nr, Nz)).sum(axis=0) % 2) * 0.06
-        ax_src.pcolormesh(X, Y, _mirror(checker),
+        ax_src.pcolormesh(X, Y, checker.T,
                           cmap='Greys', vmin=0, vmax=1,
                           edgecolors='#bbb', linewidth=0.2)
         ax_src.text(0.5, 0.5, 'No active\nheat sources',
                     transform=ax_src.transAxes,
                     ha='center', va='center', fontsize=11, color='#777')
-    _style_ax(ax_src, r_faces_full, z_faces, dr * 1e2, dz * 1e2, 'Source Map [W/cell]')
+    _style_ax(ax_src, x_faces, z_faces, dr * 1e2, dz * 1e2, 'Source Map [W/cell]')
 
     if save_path:
         plt.savefig(save_path, dpi=160, bbox_inches='tight')
@@ -180,7 +176,7 @@ def plot_mesh_maps(
     plt.close(fig)
 
 
-# ── Convenience wrapper ────────────────────────────────────────────────────────
+# Convenience wrapper
 def inspect_config(cfg: dict, save_path: str | None = None):
     """Build maps from a merged config dict and render them."""
     from .mesh import build_mesh, build_maps
@@ -191,6 +187,7 @@ def inspect_config(cfg: dict, save_path: str | None = None):
         cfg.get('components', []),
         cfg.get('heaters', []),
         cfg.get('straps', []),
+        structures=cfg.get('structures', []),
     )
     plot_mesh_maps(
         material_map, source_map, r, z, dr, dz,
@@ -201,23 +198,15 @@ def inspect_config(cfg: dict, save_path: str | None = None):
     )
 
 
-# ── Internal helpers ───────────────────────────────────────────────────────────
-def _mirror(field_rz: np.ndarray) -> np.ndarray:
-    """(Nr, Nz) field -> (Nz, 2Nr) mirrored about the axis for a full-diameter,
-    z-vertical pcolormesh (rows = z increasing upward, cols = r from -R to +R)."""
-    f_T = field_rz.T                                  # (Nz, Nr)  rows=z, cols=r
-    return np.concatenate([f_T[:, ::-1], f_T], axis=1)  # (Nz, 2Nr)
-
-
-def _style_ax(ax, r_faces_full, z_faces, dr_cm, dz_cm, title):
-    ax.set_xlim(r_faces_full[0], r_faces_full[-1])
+# Internal helpers
+def _style_ax(ax, x_faces, z_faces, dr_cm, dz_cm, title):
+    ax.set_xlim(x_faces[0], x_faces[-1])
     ax.set_ylim(z_faces[0], z_faces[-1])              # z=0 (floor) at bottom
-    ax.set_xlabel('r [cm]  (mirrored full diameter — axis at 0)', fontsize=9)
+    ax.set_xlabel('x [cm]  (left wall at 0)', fontsize=9)
     ax.set_ylabel('z [cm]  (floor at bottom)', fontsize=9)
     ax.set_title(title, fontsize=10, pad=5)
     ax.set_aspect('equal')
     ax.tick_params(labelsize=8)
-    ax.axvline(0.0, color='#555', lw=0.8, ls=(0, (4, 3)))   # central axis line
     ax.xaxis.set_minor_locator(MultipleLocator(dr_cm))
     ax.yaxis.set_minor_locator(MultipleLocator(dz_cm))
     ax.grid(which='minor', color='#ddd', linewidth=0.15)
@@ -234,17 +223,14 @@ def _region_centre_cm(region, z_c, r_c):
 
 
 def _draw_border(ax, region, dz_cm, dr_cm, color, lw, ls):
-    """Outline the region on BOTH mirrored halves (x=r, y=z)."""
+    """Outline the region (x = width, z = height)."""
     ri0, ri1 = region['r_idx']
     zi0, zi1 = region['z_idx']
-    r_lo, r_hi = ri0 * dr_cm, ri1 * dr_cm
+    x_lo, x_hi = ri0 * dr_cm, ri1 * dr_cm
     z_lo, z_hi = zi0 * dz_cm, zi1 * dz_cm
-    if r_hi <= r_lo or z_hi <= z_lo:
+    if x_hi <= x_lo or z_hi <= z_lo:
         return
-    # right half (+r) and mirrored left half (-r)
-    ax.add_patch(plt.Rectangle((r_lo, z_lo), r_hi - r_lo, z_hi - z_lo,
-                 fill=False, edgecolor=color, linewidth=lw, linestyle=ls))
-    ax.add_patch(plt.Rectangle((-r_hi, z_lo), r_hi - r_lo, z_hi - z_lo,
+    ax.add_patch(plt.Rectangle((x_lo, z_lo), x_hi - x_lo, z_hi - z_lo,
                  fill=False, edgecolor=color, linewidth=lw, linestyle=ls))
 
 
@@ -269,7 +255,6 @@ def _annotate_regions(ax, items, z_c, r_c, dz_cm, dr_cm,
         if extra_line is not None:
             label = label + '\n' + extra_line(item)
 
-        # Label once, on the right (+r) half — like the CAD callouts
         ax.text(r_mid, z_mid, label,
                 ha='center', va='center',
                 fontsize=fontsize, color=text_color,

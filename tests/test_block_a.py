@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_block_a.py – Unit tests for Block A (US Standard Atmosphere + Churchill-Bernstein).
 """
 
@@ -10,7 +10,7 @@ import pytest
 from src.block_a import atmosphere, evaluate_block_a
 
 
-# ── Atmosphere correctness ─────────────────────────────────────────────────────
+# Atmosphere correctness
 
 def test_sea_level_temperature():
     atm = atmosphere(0.0)
@@ -60,7 +60,7 @@ def test_no_nan_across_full_range():
             assert np.isfinite(atm[key]), f"NaN/Inf in atm['{key}'] at h={h} m"
 
 
-# ── evaluate_block_a ───────────────────────────────────────────────────────────
+# evaluate_block_a
 
 def test_block_a_sea_level_nominal():
     T_inf, h_total = evaluate_block_a(h_alt=0.0, V_rel=5.0, D_box=0.3, L_box=0.3)
